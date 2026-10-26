@@ -77,7 +77,7 @@ const drop = async (response) => {
   }
 };
 
-/** Retry-After in seconds (or an HTTP date) -> ms, undefined when absent or odd. */
+/** Retry-After in seconds (or an HTTP date, against the `Date` header) -> ms, undefined when absent or odd. */
 function retryAfterOf(response, now) {
   const raw = response.headers?.get?.('retry-after');
   if (typeof raw !== 'string' || raw.length > 64) {
@@ -86,8 +86,13 @@ function retryAfterOf(response, now) {
   if (/^\d{1,9}$/.test(raw.trim())) {
     return Number(raw.trim()) * 1000;
   }
+  // An HTTP date is compared with the device's own `Date` header (its clock),
+  // our clock only without one; without a readable date, no delay is taken.
   const at = Date.parse(raw);
-  return Number.isFinite(at) ? Math.max(0, at - now()) : undefined;
+  const dateRaw = response.headers?.get?.('date');
+  const sent = typeof dateRaw === 'string' && dateRaw.length <= 64 ? Date.parse(dateRaw) : NaN;
+  const base = Number.isFinite(sent) ? sent : now();
+  return Number.isFinite(at) ? Math.max(0, at - base) : undefined;
 }
 
 export class Net2GridClient {

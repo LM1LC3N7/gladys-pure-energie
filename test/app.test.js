@@ -165,7 +165,7 @@ test('the pace: never two reads less than 30 s apart, whatever asks', async () =
   const one = dev.net.calls.length;
   await s.app.start(CONFIG);
   await s.app.scan();
-  await s.app.start(await s.gladys.getConfig());
+  await s.app.onConnected();
   await s.app.onDeviceCreated(created());
   await s.app.onDeviceUpdated(created());
   await s.app.acceptHeldIndex();
@@ -207,18 +207,18 @@ test('the pace holds when the wall clock jumps; /data dates never in the future'
   assert.equal(s.dev.net.calls.length, 4 * one, 'a future date is not a recent read');
 });
 
-test('freshness: a reading whose time has not moved is never published again', async () => {
+test('freshness: a reading whose time and values have not moved is never published again', async () => {
   let t = NOW;
   let power = 500;
   const dev = deviceWith({ '/meter/now': () => meter({ t, power }) });
   const s = await setup({ devices: [created()], dev });
   await s.start();
   assert.deepEqual(statesOf(s.gladys, 'power'), [500]);
-  power = 900; // a value changed under the same time: not a new reading
   await s.wait(15 * MINUTE);
   assert.deepEqual(statesOf(s.gladys, 'power'), [500], 'nothing, not even the heartbeat');
   assert.doesNotMatch(status(s).message.en, /not given new values/);
-  t = NOW + 16 * MINUTE;
+  // A device clock stuck on one date while the values move: new readings.
+  power = 900;
   await s.wait(30 * SECOND);
   assert.deepEqual(statesOf(s.gladys, 'power'), [500, 900]);
   await s.wait(2 * HOUR);
@@ -243,23 +243,112 @@ test('freshness: nothing old is sent at a restart, a reconnection or a device cr
   let s = await setup({ devices: [created()], dev, store });
   await s.start();
   assert.equal(statesOf(s.gladys, 'power').length, 1);
-  assert.match(store.data.fresh.mark, /^t\d{13}$/);
+  assert.match(store.data.marks[ID].mark, /^t\d{13}f[0-9a-f]{8}$/);
   // Reconnection to Gladys: the published states are forgotten, the old reading stays old.
-  await s.app.start(await s.gladys.getConfig());
+  await s.app.onConnected();
   await s.wait(30 * SECOND);
   await s.app.onDeviceCreated(created());
   await s.wait(30 * SECOND);
   assert.equal(statesOf(s.gladys, 'power').length, 1);
   await s.app.stop();
-  // A restart of the container: the time of the values is in /data.
+  // A restart of the container: the mark of the values is in /data.
   s = await setup({ devices: [created()], dev, store, now: s.clock.now + MINUTE });
   await s.start();
   assert.equal(s.gladys.fake.states.length, 0, 'the same reading after a restart: not sent');
-  // A future date in /data is not valid: the reading counts as new.
-  store.data.fresh.at = s.clock.now + HOUR;
-  const s2 = await setup({ devices: [created()], dev, store, now: s.clock.now + MINUTE });
+  // A restart with the wall clock behind /data (a Pi without RTC): the mark
+  // is kept, only its age counts from now.
+  await s.app.stop();
+  const s2 = await setup({ devices: [created()], dev, store, now: s.clock.now - 4 * HOUR });
   await s2.start();
-  assert.equal(statesOf(s2.gladys, 'power').length, 1);
+  assert.equal(s2.gladys.fake.states.length, 0, 'a clock behind /data sends nothing old');
+  await s2.wait(2 * HOUR);
+  assert.match(status(s2).message.en, /has not given new values for 2 h/);
+  assert.equal(s2.gladys.fake.states.length, 0);
+});
+
+test('freshness: the age of a frozen reading survives a restart', async () => {
+  const store = createMemoryStore();
+  const dev = deviceWith({ '/meter/now': () => meter({ t: NOW }) });
+  const s = await setup({ devices: [created()], dev, store });
+  await s.start();
+  await s.wait(HOUR + 50 * MINUTE);
+  assert.doesNotMatch(status(s).message.en, /not given new values/);
+  await s.app.stop();
+  const again = await setup({ devices: [created()], dev, store, now: s.clock.now + SECOND });
+  await again.start();
+  await again.wait(10 * MINUTE);
+  assert.match(status(again).message.en, /has not given new values for 2 h/);
+});
+
+test('freshness: each device keeps its own mark (A, then B, then A again)', async () => {
+  let raw = undefined;
+  const frozenA = meter({ t: NOW, power: 111 });
+  const dev = deviceWith({
+    '/info': () => info(raw),
+    '/meter/now': (t) => (raw ? meter({ t, power: 222 }) : frozenA),
+  });
+  const s = await setup({ devices: [created(), created({ id: OTHER_ID })], dev });
+  await s.start();
+  assert.deepEqual(statesOf(s.gladys, 'power'), [111]);
+  raw = OTHER_RAW_ID;
+  await s.wait(30 * SECOND);
+  assert.deepEqual(statesOf(s.gladys, 'power', OTHER_ID), [222]);
+  raw = undefined;
+  await s.wait(30 * SECOND);
+  await s.wait(30 * SECOND);
+  assert.deepEqual(statesOf(s.gladys, 'power'), [111], 'the frozen reading of A is not new again');
+});
+
+test('a reconnection sends a new reading again even with the same values', async () => {
+  const s = await setup({ devices: [created()] });
+  await s.start();
+  await s.wait(30 * SECOND);
+  assert.deepEqual(statesOf(s.gladys, 'power'), [338], 'the SDK skips an unchanged value');
+  // Gladys restarted: it lost the values; the next new reading carries them again.
+  await s.app.onConnected();
+  await s.wait(30 * SECOND);
+  assert.deepEqual(statesOf(s.gladys, 'power'), [338, 338]);
+});
+
+test('connected: started from the configuration the SDK just read, never a second request', async () => {
+  const s = await setup({ devices: [created()] });
+  s.gladys.getConfig = async () => {
+    throw new DOMException('timed out', 'TimeoutError');
+  };
+  await s.app.onConnected();
+  await s.advance(0);
+  await s.app.idle();
+  assert.equal(s.dev.net.calls.length, 3);
+  assert.equal(status(s).connected, true);
+});
+
+test('a crash during a read: the restart 2 s later does not read again sooner', async () => {
+  const store = createMemoryStore();
+  const dev = createDevice();
+  const s = await setup({ dev, store });
+  await s.start();
+  await s.wait(30 * SECOND);
+  const two = dev.net.calls.length;
+  // No stop: the container dies; /data holds what the read wrote before its requests.
+  const again = await setup({ dev, store, now: s.clock.now + 2 * SECOND });
+  await again.start();
+  assert.equal(dev.net.calls.length, two);
+  await again.wait(29 * SECOND);
+  assert.equal(dev.net.calls.length, two + 3);
+});
+
+test('the guard runs on session time: a wall clock moved by NTP never widens its margin', async () => {
+  let wh = 9_000_000;
+  const wall = { offset: 0 };
+  const dev = deviceWith({ '/meter/now': (t) => meter({ t, imported: wh }) });
+  const s = await setup({ devices: [created()], dev, wall });
+  await s.start();
+  wall.offset = 10 * HOUR;
+  wh = 9_900_000;
+  await s.wait(MINUTE);
+  await s.wait(MINUTE);
+  assert.ok(!statesOf(s.gladys, 'consumption_index').includes(9900), '+900 kWh held');
+  assert.match(status(s).message.en, /jumped from 9000 to 9900 kWh/);
 });
 
 test('freshness without a time of reading: a fingerprint of the values', async () => {
@@ -274,7 +363,7 @@ test('freshness without a time of reading: a fingerprint of the values', async (
   await s.start();
   await s.wait(30 * SECOND);
   assert.deepEqual(statesOf(s.gladys, 'power'), [400]);
-  assert.match(s.store.data.fresh.mark, /^f[0-9a-f]{8}$/);
+  assert.match(s.store.data.marks[ID].mark, /^f[0-9a-f]{8}$/);
   power = 410;
   await s.wait(30 * SECOND);
   assert.deepEqual(statesOf(s.gladys, 'power'), [400, 410]);
@@ -323,6 +412,10 @@ test('identity: another device at the address gets its own device', async () => 
     status(s).message.en,
     new RegExp(`Another device answers at this address \\(id ${OTHER_ID}\\)`),
   );
+  // The first one comes back: the note goes away.
+  id = undefined;
+  await s.wait(30 * SECOND);
+  assert.doesNotMatch(status(s).message.en, /Another device/);
 });
 
 test('a late answer of an old address publishes nothing and sets no status', async () => {
@@ -348,6 +441,35 @@ test('a late answer of an old address publishes nothing and sets no status', asy
   assert.match(status(s).message.en, /Waiting for the first answer .* 192\.168\.1\.61/);
 });
 
+test('an address changed while the second /info is pending: nothing published', async () => {
+  let release;
+  const slow = new Promise((resolve) => {
+    release = resolve;
+  });
+  let infos = 0;
+  const dev = deviceWith({
+    '/info': () => {
+      infos += 1;
+      return infos === 2 ? slow.then(() => info()) : info();
+    },
+  });
+  const s = await setup({ dev, devices: [created()] });
+  await s.app.start(CONFIG);
+  const running = s.advance(0);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(pathsOf(dev), ['/info', '/meter/now', '/info']);
+  await s.app.start({ address: '192.168.1.61' });
+  const statuses = s.gladys.fake.connectionStatuses.length;
+  const discoveries = s.gladys.fake.bodies('POST', '/discovered_device').length;
+  release();
+  await running;
+  await s.app.idle();
+  assert.equal(s.gladys.fake.states.length, 0);
+  assert.equal(s.gladys.fake.connectionStatuses.length, statuses);
+  assert.equal(s.gladys.fake.bodies('POST', '/discovered_device').length, discoveries);
+  assert.equal(s.app.outcome, undefined, 'the new session knows nothing of the old read');
+});
+
 test('429 or 5xx: a pause kept in /data, never faster, kept by a reconnection', async () => {
   const store = createMemoryStore();
   let answer = () => json('', { status: 429, headers: { 'retry-after': '300' } });
@@ -356,7 +478,7 @@ test('429 or 5xx: a pause kept in /data, never faster, kept by a reconnection', 
   await s.start();
   assert.match(status(s).message.en, /asks to wait \(too many requests\).*5 min/);
   assert.equal(store.data.pause.code, 'rate_limited');
-  await s.app.start(await s.gladys.getConfig());
+  await s.app.onConnected();
   assert.equal((await s.app.testConnection()).en, status(s).message.en);
   await s.wait(4 * MINUTE);
   assert.equal(dev.net.calls.length, 1);
@@ -442,6 +564,18 @@ test('/data unreadable: never written over, said in the status', async () => {
   assert.equal(statesOf(s.gladys, 'power').length, 1);
 });
 
+test('/data that becomes unreadable while running is never written over', async () => {
+  const store = createMemoryStore();
+  const s = await setup({ store, devices: [created()] });
+  await s.start();
+  await store.save({ unreadable: true });
+  await s.wait(MINUTE);
+  await s.app.onDeviceCreated(created());
+  await s.app.stop();
+  assert.deepEqual(store.data, { unreadable: true });
+  assert.match(status(s).message.en, /cannot be read: it is left as it is/);
+});
+
 test('/data not writable: the values go on', async () => {
   const store = {
     load: () => ({}),
@@ -479,7 +613,7 @@ test('every connection publishes the status and the Discovery list again', async
   const statuses = s.gladys.fake.connectionStatuses.length;
   const discoveries = s.gladys.fake.bodies('POST', '/discovered_device').length;
   // What index.js does on every `connected`.
-  await s.app.start(await s.gladys.getConfig());
+  await s.app.onConnected();
   await s.app.idle();
   assert.equal(s.gladys.fake.connectionStatuses.length, statuses + 1);
   assert.equal(s.gladys.fake.bodies('POST', '/discovered_device').length, discoveries + 1);

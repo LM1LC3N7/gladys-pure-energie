@@ -35,24 +35,26 @@ const labelOf = (raw) => {
   return value !== undefined && LABEL.test(value) ? value : undefined;
 };
 
-/** The NET2GRID id: groups of hex digits, separated by ":" or "-" (or none). */
-const ID = /^[0-9a-f]{2,8}(?:[:-]?[0-9a-f]{2,8}){0,7}$/i;
-
 /**
  * The identity of the device: its id, hex digits only, lower case (8 to 32
- * of them, not only zeros), or undefined when it cannot be read.
+ * of them, not only zeros), or undefined when it cannot be read. Groups of
+ * 2 to 32 hex digits separated by ":" or "-" (at most 8 groups). Linear: any
+ * other character is refused first, then the text is split.
  */
 export function idOf(raw) {
-  // A control byte (CR, LF...) is never trimmed away: such an id is unreadable.
-  // eslint-disable-next-line no-control-regex
-  if (typeof raw === 'string' && /[\u0000-\u001f\u007f]/.test(raw)) {
+  if (typeof raw !== 'string' || raw.length > 64) {
     return undefined;
   }
-  const value = text(raw, 64);
-  if (value === undefined || !ID.test(value)) {
+  // Spaces around only: a control byte (CR, LF...) is never trimmed away.
+  const value = raw.replace(/^ +| +$/g, '');
+  if (!/^[0-9A-Fa-f:-]+$/.test(value)) {
     return undefined;
   }
-  const hex = value.replace(/[:-]/g, '').toLowerCase();
+  const groups = value.split(/[:-]/);
+  if (groups.length > 8 || groups.some((g) => g.length < 2)) {
+    return undefined;
+  }
+  const hex = groups.join('').toLowerCase();
   return hex.length >= 8 && hex.length <= 32 && !/^0+$/.test(hex) ? hex : undefined;
 }
 

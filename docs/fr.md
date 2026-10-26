@@ -42,12 +42,13 @@ Un appareil, nommé d'après le modèle et la fin de l'identifiant du lecteur
 
 ## Seulement des valeurs fraîches
 
-Le lecteur date ses valeurs. Une lecture dont la date n'a pas avancé depuis
-la précédente n'envoie rien : une vieille valeur n'est jamais envoyée comme
-une nouvelle, ni après un redémarrage de l'intégration, ni après un
-redémarrage de Gladys (la date est gardée dans `/data`). Quand la date n'a
-pas avancé depuis 2 heures, l'état le dit. Sans date, une empreinte des
-valeurs en tient lieu.
+Le lecteur date ses valeurs. Une lecture dont la date et les valeurs n'ont
+pas bougé depuis la précédente n'envoie rien : une vieille valeur n'est
+jamais envoyée comme une nouvelle, ni après un redémarrage de
+l'intégration, ni après un redémarrage de Gladys (cette marque est gardée
+dans `/data`, pour chaque lecteur vu, même quand l'horloge de Gladys
+redémarre en retard). Quand rien n'a bougé depuis 2 heures, l'état le dit.
+Sans date, une empreinte des valeurs en tient lieu.
 
 ## Identité
 

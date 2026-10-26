@@ -71,8 +71,9 @@ test/                             node --test, against the SDK's fake Gladys, a 
 - **Units**: only the core's (`DEVICE_FEATURE_UNITS_BY_CATEGORY`): W and kWh
   for `energy-sensor`, none for `unknown` (the unit is in the name). An
   energy without a known unit is never used.
-- **Freshness**: a reading whose time (or fingerprint) has not moved
-  publishes nothing; the mark is kept in `/data`. Never publish from a path
+- **Freshness**: a reading whose mark (time and fingerprint of the values)
+  has not moved publishes nothing; the marks are kept in `/data` per device,
+  a future date there only restarts their age. Never publish from a path
   that skips `followFreshness()`.
 - **The pace**: never two reads less than 30 s apart, whatever asks; the
   time of the last read is in `/data`. Never add a read path that skips

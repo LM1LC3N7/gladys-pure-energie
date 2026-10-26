@@ -29,6 +29,19 @@ test('the id: hex digits only, lower case; anything else unreadable', () => {
   }
 });
 
+test('the id is read in linear time, whatever the device sends', () => {
+  const hostile = `${'a'.repeat(40)}g`;
+  const started = performance.now();
+  for (let i = 0; i < 200; i += 1) {
+    assert.equal(idOf(hostile), undefined);
+    assert.equal(idOf(`${'ab:'.repeat(21)}g`), undefined);
+  }
+  assert.ok(performance.now() - started < 200, `${performance.now() - started} ms`);
+  assert.equal(idOf('84df0c11-9999:3795'), ID);
+  assert.equal(idOf('84df0c1199993795abcd0000ffffeeee'), '84df0c1199993795abcd0000ffffeeee');
+  assert.equal(idOf('84df0c1199993795abcd0000ffffeeee00'), undefined);
+});
+
 test('the device page: the id, model and firmware checked; no id is unreadable, not another', () => {
   assert.deepEqual(parseInfo(info()), {
     id: ID,

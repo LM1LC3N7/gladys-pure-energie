@@ -55,23 +55,37 @@
   never 0. The power is the only `energy-sensor/power`, signed. An energy
   without a known unit (Wh, kWh) is never used. No `publishEnergyConsumption`.
   The margin is a configuration field (100 kW by default, 1 to 2000).
-- **Freshness**: the latest `time` of the three values (Unix seconds) is the
-  mark of a reading (a fingerprint of the values without one), kept in
-  `/data` with the wall time it last changed (a future date is not valid). A
-  reading with the same mark publishes nothing (not even the heartbeat), at
-  a restart and a reconnection too; unchanged for 2 h, the status says so.
+- **Freshness** (review r1): the latest `time` of the three values (Unix
+  seconds) plus a fingerprint of the values is the mark of a reading (the
+  fingerprint alone without a time), kept in `/data` per device id (8 at
+  most) with the wall time it last changed. A future date there keeps the
+  mark and only restarts its age (a clock behind /data after a restart, a Pi
+  without RTC). A reading with the same mark publishes nothing (not even the
+  heartbeat), at a restart and a reconnection too; unchanged for 2 h, the
+  status says so.
 - **Pace**: one timer, one read at a time, never two reads less than 30 s
   apart (the HA interval) whatever asks; the time of the last read is in
-  `/data` before the request (at most once a minute, and at a clean stop); a
-  future date there is not valid (read at once).
+  `/data` before every request (review r1); a future date there is not valid
+  (read at once).
 - **Errors**: unreachable or wrong answer: 30 s doubled to 10 min (in
   memory); 429/5xx: pause in `/data`, Retry-After or 1 min doubled, 1 min to
   6 h, on the monotonic clock in memory. 401/403 are plain HTTP errors (the
   API has no login).
-- **Addresses**: a host name or a unicast IP; 0.0.0.0, broadcast,
-  multicast, `::`, control bytes and logins in the address are refused.
-- **/data**: a missing file is an empty state; a file that cannot be read is
-  never written over (status note).
+- **Addresses**: a host name or a unicast IP in its plain form, checked as
+  the WHATWG URL parser reads it (review r1); 0.0.0.0, broadcast, multicast,
+  `::`, their hex/octal/short and `::ffff:` forms, control bytes and logins
+  in the address are refused.
+- **Index guard time** (review r1): the wall clock at start plus the
+  monotonic time since, so that NTP moving the wall clock in a session never
+  widens the margin; the same for the margin between the two clicks.
+- **Connected** (review r1): started from `gladys.config`, which the SDK
+  reads just before emitting `connected`; no second `getConfig()` that could
+  fail alone and leave the integration idle.
+- **Other device note** (review r1): shown while the device read has no
+  Gladys device and another device of this integration exists.
+- **/data**: a missing file is an empty state; a file that cannot be read,
+  at start or later (checked at every save), is never written over (status
+  note).
 - **No custom User-Agent**, no imitation: Node's own fetch.
 
 ## Ideas

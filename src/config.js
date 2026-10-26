@@ -54,7 +54,7 @@ export function parseAddress(raw) {
       : INVALID;
   }
   if (/^[0-9a-f:.]+$/i.test(text) && (text.match(/:/g) ?? []).length >= 2) {
-    return unicast(text) ? { address: `[${text.toLowerCase()}]` } : INVALID;
+    return unicast(text) ? withPort(`[${text.toLowerCase()}]`, undefined) : INVALID;
   }
   const match = /^(.*?)(?::(\d{1,5}))?$/.exec(text);
   const host = match[1];
@@ -64,7 +64,42 @@ export function parseAddress(raw) {
   return withPort(host.toLowerCase(), match[2]);
 }
 
-function withPort(host, port) {
+/** Whether a canonical IPv6 address (URL form) may be one device, its mapped IPv4 checked too. */
+function unicast6(h) {
+  if (!unicast(h)) {
+    return false;
+  }
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h);
+  if (!mapped) {
+    return true;
+  }
+  const [hi, lo] = [parseInt(mapped[1], 16), parseInt(mapped[2], 16)];
+  return unicast([hi >> 8, hi & 255, lo >> 8, lo & 255].join('.'));
+}
+
+/**
+ * The host as fetch will reach it (WHATWG URL): an IPv4 address only in its
+ * plain dotted form (never 0xe0000001, 0x0, 010.0.0.1, which a URL turns
+ * into another address), checked again once canonical. Undefined otherwise.
+ */
+function canonical(host) {
+  let hostname;
+  try {
+    hostname = new URL(`http://${host}/`).hostname;
+  } catch {
+    return undefined;
+  }
+  if (hostname.startsWith('[')) {
+    return unicast6(hostname.slice(1, -1)) ? hostname : undefined;
+  }
+  return hostname === host && unicast(hostname) ? hostname : undefined;
+}
+
+function withPort(raw, port) {
+  const host = canonical(raw);
+  if (host === undefined) {
+    return INVALID;
+  }
   if (port === undefined) {
     return { address: host };
   }

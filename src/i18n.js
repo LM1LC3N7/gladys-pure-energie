@@ -131,8 +131,8 @@ export const T = {
       fr: 'Créez son appareil depuis l’onglet « Découverte » pour recevoir ses valeurs.',
     },
     otherDevice: (id) => ({
-      en: `Another device answers at this address (id ${id}): it gets its own device; the previous one keeps its history and gets no more values.`,
-      fr: `Un autre appareil répond à cette adresse (identifiant ${id}) : il a son propre appareil ; le précédent garde son historique et ne reçoit plus de valeurs.`,
+      en: `Another device answers at this address (id ${id}): create its own device from the "Discover" tab; the previous one keeps its history and gets no values while it is away.`,
+      fr: `Un autre appareil répond à cette adresse (identifiant ${id}) : créez son propre appareil depuis l’onglet « Découverte » ; le précédent garde son historique et ne reçoit pas de valeurs tant qu’il est absent.`,
     }),
     frozen: (after) => ({
       en: `The device has not given new values for ${delay(after).en} or more (its time of reading does not move): nothing is sent until it does.`,

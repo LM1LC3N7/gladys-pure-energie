@@ -15,8 +15,8 @@ Home Assistant uses), ported to JavaScript.
 - Consumption index once a minute, as the only energy index, checked by a
   guard: never 0, a drop or a jump held until the user accepts it in two
   clicks. The injection is a plain sensor, never billed.
-- Only fresh values: a reading whose time has not moved is never sent again,
-  not even after a restart.
+- Only fresh values: a reading whose time and values have not moved is
+  never sent again, not even after a restart.
 - Read-only: only GET requests.
 
 Documentation: [English](docs/en.md), [français](docs/fr.md).

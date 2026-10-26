@@ -36,12 +36,11 @@ gladys.onConfigUpdated((config) => {
 // Every connection (the first one and each reconnection) publishes the
 // Discovery list and the status again, and the values at the next read that
 // brings new ones.
-gladys.on('connected', async () => {
-  try {
-    await app.start(await gladys.getConfig());
-  } catch (err) {
-    logger.error(`Start failed (${err?.name ?? 'Error'})`);
-  }
+// The configuration is the one the SDK has just read before `connected`
+// (`gladys.config`): no second request that could fail alone and leave the
+// integration idle.
+gladys.on('connected', () => {
+  app.onConnected().catch((err) => logger.error(`Start failed (${err?.name ?? 'Error'})`));
 });
 gladys.on('disconnected', () => {
   app.stop().catch((err) => logger.error(`Stop failed (${err?.name ?? 'Error'})`));

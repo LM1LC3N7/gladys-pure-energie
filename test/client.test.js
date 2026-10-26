@@ -80,6 +80,18 @@ test('our error codes, never a text of the device', async () => {
     client(() => json('', { status: 429, headers: { 'retry-after': '120' } })).client.info(),
   );
   assert.equal(limited.retryAfter, 120_000);
+  const dated = await codeOf(
+    client(() =>
+      json('', {
+        status: 503,
+        headers: {
+          'retry-after': 'Thu, 01 Jan 2015 00:05:00 GMT',
+          date: 'Thu, 01 Jan 2015 00:00:00 GMT',
+        },
+      }),
+    ).client.info(),
+  );
+  assert.equal(dated.retryAfter, 300_000, 'against the clock of the device');
   // /info answering something that is not an object: not a NET2GRID device.
   assert.equal((await codeOf(client(() => json([1, 2])).client.info())).code, 'unknown_answer');
 });

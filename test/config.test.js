@@ -31,6 +31,14 @@ test('the address: never any, broadcast or multicast; IPv4 numbers within 255', 
     '[::]:80',
     '999.1.1.1',
     '1.2.3',
+    '0xe0000001',
+    '0xe0.0.0.1',
+    '0xffffffff',
+    '0x0',
+    '010.0.0.1',
+    '[::ffff:224.0.0.1]',
+    '[::ffff:0.0.0.0]',
+    'foo.123',
   ]) {
     assert.deepEqual(parseAddress(bad), { error: 'invalid' }, bad);
   }

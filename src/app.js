@@ -12,10 +12,10 @@
 // "another device" (nothing is published, tried again later).
 //
 // Freshness: the device dates its values (Unix seconds). A read whose date
-// has not moved since the last one publishes nothing (an old value is never
-// sent as new, not even after a restart: the date is kept in /data); not
-// moved for FROZEN_AFTER, the status says so. Without a date, a fingerprint
-// of the values stands for it.
+// and values have not moved since the last one publishes nothing (an old
+// value is never sent as new, not even after a restart: the mark is kept in
+// /data per device); not moved for FROZEN_AFTER, the status says so.
+// Without a date, the fingerprint of the values alone stands for it.
 //
 // The pace is global and kept across restarts: never two reads less than an
 // interval apart, whatever asks (a reconnection, a save of the form, the test
@@ -27,9 +27,11 @@
 // changes, a late answer of the old one publishes nothing and sets no status
 // (checked after every await).
 //
-// Two clocks: `now` (wall clock) dates the indexes and what /data keeps;
-// `monotonic` paces the reads, the pauses and the freshness, so that a wall
-// clock set back or forward never stops nor hurries them.
+// Two clocks: `now` (wall clock) dates what /data keeps; `monotonic` paces
+// the reads, the pauses and the freshness, so that a wall clock set back or
+// forward never stops nor hurries them. The index guard gets the wall clock
+// at start plus the monotonic time since (`guardNow`): a wall clock moved by
+// NTP in the session never widens its margin.
 // -----------------------------------------------------------------------------
 
 import { createHash } from 'node:crypto';
@@ -38,7 +40,6 @@ import { isComplete, normalizeConfig } from './config.js';
 import {
   ACCEPT_CONFIRM_AFTER,
   ACCEPT_CONFIRM_WITHIN,
-  ATTEMPT_SAVE_EVERY,
   FROZEN_AFTER,
   INDEX_INTERVAL,
   INDEX_SLACK_KWH,
@@ -78,9 +79,11 @@ const finite = (value) => typeof value === 'number' && Number.isFinite(value);
 const LABEL = /^[A-Za-z0-9][A-Za-z0-9 ._/+-]{0,31}$/;
 const labelOrUndefined = (value) =>
   typeof value === 'string' && LABEL.test(value) ? value : undefined;
-const MARK = /^(?:t\d{13}|f[0-9a-f]{8})$/;
+const MARK = /^(?:t\d{13})?f[0-9a-f]{8}$/;
+/** At most this many devices keep the mark of their last values in /data. */
+const MAX_KEPT_MARKS = 8;
 
-/** The fingerprint of the values of a reading without a date: 8 hex digits. */
+/** The fingerprint of the values of a reading: 8 hex digits. */
 export const fingerprintOf = (reading) =>
   createHash('sha256')
     .update(
@@ -89,11 +92,13 @@ export const fingerprintOf = (reading) =>
     .digest('hex')
     .slice(0, 8);
 
-/** What stands for the date of a reading: its time, or a fingerprint of its values. */
+/**
+ * What tells a new reading: its time and a fingerprint of its values (the
+ * fingerprint alone without a time). A device clock stuck on one date while
+ * the values move still gives new readings; a frozen copy does not.
+ */
 export const markOf = (reading) =>
-  reading.sourceAt !== undefined
-    ? `t${String(reading.sourceAt).padStart(13, '0')}`
-    : `f${fingerprintOf(reading)}`;
+  `${reading.sourceAt !== undefined ? `t${String(reading.sourceAt).padStart(13, '0')}` : ''}f${fingerprintOf(reading)}`;
 
 /** The index Gladys already holds for a feature of a created device, when it says so. */
 function lastValueOf(device, featureId) {
@@ -160,22 +165,22 @@ function keptMeter(meter) {
 }
 
 /**
- * The date of the last values kept in /data: `{ id, mark, at }`, `at` the
- * wall time it last changed (a date in the future is not valid), brought
- * onto the monotonic clock.
+ * The marks of the last values kept in /data, by device id: `{ mark, at }`,
+ * `at` the wall time the mark last changed, brought onto the monotonic
+ * clock. A date in the future (a clock behind /data after a restart, a
+ * Raspberry Pi without RTC) keeps the mark: only its age is lost, counted
+ * from now. The mark comes from the device, not from our clock.
  */
-function keptFresh(fresh, now, mono) {
-  if (
-    !fresh ||
-    typeof fresh.id !== 'string' ||
-    typeof fresh.mark !== 'string' ||
-    !MARK.test(fresh.mark) ||
-    !finite(fresh.at) ||
-    fresh.at > now
-  ) {
-    return undefined;
+function keptMarks(marks, now, mono) {
+  const kept = new Map();
+  for (const [id, value] of plainEntries(marks)) {
+    if (idOf(id) !== id || typeof value.mark !== 'string' || !MARK.test(value.mark)) {
+      continue;
+    }
+    const at = finite(value.at) && value.at <= now ? value.at : now;
+    kept.set(id, { mark: value.mark, at, mono: mono - (now - at) });
   }
-  return { id: fresh.id, mark: fresh.mark, at: fresh.at, mono: mono - (now - fresh.at) };
+  return new Map([...kept].slice(-MAX_KEPT_MARKS));
 }
 
 export class PureEnergieApp {
@@ -217,12 +222,15 @@ export class PureEnergieApp {
     this.pause = validPause(kept.pause, at, mono);
     /** The device seen, kept so that it is offered at a restart. */
     this.meter = keptMeter(kept.meter);
-    this.fresh = keptFresh(kept.fresh, at, mono);
+    /** By device id: the mark of its last values (src/app.js markOf), its wall and monotonic age. */
+    this.marks = keptMarks(kept.marks, at, mono);
+    /** The wall clock at start and the monotonic clock then: the time of the index guard. */
+    this.wallBase = at;
+    this.monoBase = mono;
     // The last read before a restart: the next one never comes sooner than
     // the interval. A date in the future is not valid (no read known).
     this.lastAttemptAt =
       finite(kept.lastAttemptAt) && kept.lastAttemptAt <= at ? kept.lastAttemptAt : undefined;
-    this.savedAttemptAt = this.lastAttemptAt;
     /** Monotonic time of the last read started. */
     this.lastReadAt =
       this.lastAttemptAt === undefined ? undefined : mono - (at - this.lastAttemptAt);
@@ -240,8 +248,6 @@ export class PureEnergieApp {
     this.failures = 0;
     this.nextTryAt = undefined;
     this.lastError = undefined;
-    /** Another id answered at this address during this session. */
-    this.otherDevice = false;
     /** Monotonic time the indexes were last published. */
     this.lastIndexAt = undefined;
   }
@@ -250,6 +256,16 @@ export class PureEnergieApp {
 
   start(raw = {}) {
     return this.serialize(() => this.doStart(raw));
+  }
+
+  /**
+   * Every connection to Gladys: started from the configuration the SDK has
+   * just read (`gladys.config`, refreshed before `connected`), never from a
+   * second request that could fail alone.
+   */
+  onConnected() {
+    const config = this.gladys.config;
+    return this.start(config && typeof config === 'object' ? config : {});
   }
 
   /**
@@ -417,8 +433,10 @@ export class PureEnergieApp {
     /** Another address (or a stop) during an await: this read gives up, silently. */
     const gone = () => session !== this.session || !this.running;
     this.lastReadAt = mono;
-    // Kept BEFORE the request: a restart during it never reads again sooner.
-    await this.saveAttempt(this.now());
+    // Kept BEFORE the request, at every read: a restart during it never
+    // reads again sooner.
+    this.lastAttemptAt = this.now();
+    await this.saveState();
     if (gone()) return;
     let result;
     try {
@@ -445,6 +463,7 @@ export class PureEnergieApp {
     const reading = await client.meter();
     if (gone()) return undefined;
     const after = await client.info();
+    if (gone()) return undefined;
     if (!after.id) {
       throw new DeviceError('no_identity');
     }
@@ -452,18 +471,6 @@ export class PureEnergieApp {
       throw new DeviceError('identity_changed');
     }
     return { info: before, reading };
-  }
-
-  async saveAttempt(now) {
-    this.lastAttemptAt = now;
-    if (
-      this.savedAttemptAt === undefined ||
-      now < this.savedAttemptAt ||
-      now - this.savedAttemptAt >= ATTEMPT_SAVE_EVERY
-    ) {
-      this.savedAttemptAt = now;
-      await this.saveState();
-    }
   }
 
   // --- Outcomes ----------------------------------------------------------------
@@ -478,7 +485,6 @@ export class PureEnergieApp {
     if (this.meter && this.meter.id !== info.id) {
       // Another device at this address: it gets its own device; the old one
       // keeps its history and gets nothing more from here.
-      this.otherDevice = true;
       this.logger.warn('pure-energie: another NET2GRID device answers at this address');
       this.meter = undefined;
     }
@@ -516,21 +522,38 @@ export class PureEnergieApp {
   }
 
   /**
-   * The date of the values (or their fingerprint without one), kept in /data
+   * The mark of the values (time and fingerprint), kept in /data per device
    * with the wall time it last changed: a reading is new only when it moved;
    * unchanged for FROZEN_AFTER, the values are frozen. After a restart, the
-   * same date keeps its age.
+   * same mark keeps its age (counted from the restart when /data is dated
+   * in the future); a device that comes back keeps its own mark.
    */
   followFreshness(meter, reading, mono) {
     const mark = markOf(reading);
-    if (!this.fresh || this.fresh.id !== meter.id || this.fresh.mark !== mark) {
-      this.fresh = { id: meter.id, mark, at: this.now(), mono };
+    const known = this.marks.get(meter.id);
+    if (!known || known.mark !== mark) {
+      this.marks.delete(meter.id);
+      this.marks.set(meter.id, { mark, at: this.now(), mono });
+      while (this.marks.size > MAX_KEPT_MARKS) {
+        this.marks.delete(this.marks.keys().next().value);
+      }
       reading.isNew = true;
       reading.frozen = false;
       return;
     }
     reading.isNew = false;
-    reading.frozen = mono - this.fresh.mono >= FROZEN_AFTER;
+    reading.frozen = mono - known.mono >= FROZEN_AFTER;
+  }
+
+  /** The time given to the index guard: the wall clock at start plus the monotonic time since. */
+  guardNow(mono = this.monotonic()) {
+    return this.wallBase + (mono - this.monoBase);
+  }
+
+  /** The created devices of this integration (the SDK keeps gladys.devices up to date). */
+  ourDevices() {
+    const prefix = ids(this.gladys, 'X').device.slice(0, -1);
+    return (this.gladys.devices ?? []).filter((d) => String(d.external_id).startsWith(prefix));
   }
 
   async failed(err, mono, gone) {
@@ -607,9 +630,11 @@ export class PureEnergieApp {
     if (this.outcome?.kind === 'reading') {
       const { info, reading } = this.outcome;
       const extra = [];
-      if (!this.createdDevice()) extra.push(T.notes.noDevice);
+      if (!this.createdDevice()) {
+        // Another device of ours exists: the meter reader at this address changed.
+        extra.push(this.ourDevices().length > 0 ? T.notes.otherDevice(info.id) : T.notes.noDevice);
+      }
       if (this.storeUnreadable) extra.push(T.notes.storeUnreadable);
-      if (this.otherDevice) extra.push(T.notes.otherDevice(info.id));
       if (reading.frozen) extra.push(T.notes.frozen(FROZEN_AFTER));
       if (reading.unitUnknown) extra.push(T.notes.unitUnknown);
       else if (reading.imported === undefined) extra.push(T.notes.noImport);
@@ -645,11 +670,17 @@ export class PureEnergieApp {
 
   /** Keeps the device, the date of its values, the pause, the last read and the guards. */
   async saveState() {
-    if (this.storeUnreadable) {
-      // Written again only once it reads back (fixed or removed by the user).
-      if (this.store.load().unreadable === true) {
-        return;
+    // A file that cannot be read (at start or since) is never written over:
+    // written again only once it reads back (fixed or removed by the user).
+    const loaded = this.store.load();
+    if (loaded.unreadable === true) {
+      if (!this.storeUnreadable) {
+        this.storeUnreadable = true;
+        this.logger.warn('pure-energie: the state file in /data cannot be read, left as it is');
       }
+      return;
+    }
+    if (this.storeUnreadable) {
       this.storeUnreadable = false;
       this.savedKey = undefined;
     }
@@ -658,12 +689,11 @@ export class PureEnergieApp {
       indexes[id] = guard.state();
     }
     // Never overwrite an index state not loaded yet: merged with /data.
-    const kept = Object.fromEntries(plainEntries(this.store.load().indexes));
+    const kept = Object.fromEntries(plainEntries(loaded.indexes));
     for (const id of Object.keys(indexes)) delete kept[id];
     const merged = Object.entries({ ...kept, ...indexes }).slice(-MAX_KEPT_INDEXES);
     const m = this.meter;
     const p = this.pause;
-    const f = this.fresh;
     const state = {
       meter: m
         ? {
@@ -674,7 +704,7 @@ export class PureEnergieApp {
             keys: [...m.keys],
           }
         : null,
-      fresh: f ? { id: f.id, mark: f.mark, at: f.at } : null,
+      marks: Object.fromEntries([...this.marks].map(([id, m]) => [id, { mark: m.mark, at: m.at }])),
       pause: p ? { until: p.until, count: p.count, code: p.code, status: p.status } : null,
       lastAttemptAt: this.lastAttemptAt ?? null,
       indexes: Object.fromEntries(merged),
@@ -771,7 +801,7 @@ export class PureEnergieApp {
       const saved = Object.fromEntries(plainEntries(this.store.load().indexes))[id];
       this.guards.set(
         id,
-        new IndexGuard(lastValueOf(created, id), saved, this.now(), {
+        new IndexGuard(lastValueOf(created, id), saved, this.guardNow(), {
           maxKw: this.config.maxKw,
           slackKwh: INDEX_SLACK_KWH,
         }),
@@ -805,7 +835,7 @@ export class PureEnergieApp {
       const id = external.feature(FEATURE.CONSUMPTION_INDEX);
       const guard = this.guardOf(created, id);
       const total = finite(reading.imported) ? round(reading.imported, 3) : undefined;
-      const plausible = total !== undefined && guard.accept(total, this.now());
+      const plausible = total !== undefined && guard.accept(total, this.guardNow(mono));
       if (total !== undefined && !plausible && guard.held) {
         this.logger.warn(
           `pure-energie consumption index ${guard.held.direction === 'down' ? 'drop' : 'jump'} held back: the "Accept the held index" button takes it`,
@@ -846,7 +876,9 @@ export class PureEnergieApp {
   async acceptHeldIndex() {
     const list = this.heldList();
     const mono = this.monotonic();
-    const now = this.now();
+    // Session time (never the wall clock moved by NTP meanwhile): the margin
+    // between the clicks is the time that really passed.
+    const now = this.guardNow(mono);
     const pending = this.pendingAccept;
     this.pendingAccept = undefined;
     const elapsed = pending ? mono - pending.at : undefined;
