@@ -1,61 +1,88 @@
-# Demo Devices Template
+# Pure Energie
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Unofficial integration, not affiliated with Pure Energie nor NET2GRID. It
+reads the **energy meter reader of Pure Energie** (a NET2GRID SmartBridge,
+such as the SBWF3102, plugged on the P1 port of your electricity meter)
+through its local HTTP API: no cloud, no account, no key, nothing sent to the
+device but read requests (GET), one read every 30 seconds at most.
+
+**Never tested with a real device**: it was built from the Python library
+gridnet (the one the Pure Energie integration of Home Assistant uses).
+Feedback welcome.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+One device, named after the model and the end of the id of the meter reader
+(`Pure Energie SBWF3102 3795`):
 
-## Configuration
+| Feature               | Kind              |
+| --------------------- | ----------------- |
+| Power                 | energy sensor, W  |
+| Consumption index     | energy index, kWh |
+| Injection index (kWh) | plain sensor      |
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+- The **power** is signed: below 0 while your home injects (solar panels).
+- The **consumption index** feeds the Gladys energy monitoring: Gladys
+  derives the consumption and its cost from it. It is published once a minute
+  at most and checked first: a value of 0 is never sent; any drop, even of
+  1 Wh, or a jump larger than your home could have drawn (the "highest
+  plausible power" of the configuration, 100 kW by default, over the time
+  since the last value) is **held back** (the last accepted value is sent
+  again) and shown in the integration status. If it is right (a new meter),
+  click **Accept the held index** twice (see Buttons). Saving the
+  configuration never accepts it.
+- The **injection** is never in the energy monitoring (it would be billed as
+  consumption): a plain sensor, never sent at 0.
+- An index given in another unit than Wh or kWh, or without a unit, is not
+  sent (the status says so): an index is never guessed.
+- Gas is not read.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+## Fresh values only
 
-## Actions
+The meter reader dates its values. A read whose date has not moved since
+the read before sends nothing: an old value is never sent as a new one, not
+after a restart of the integration nor after a restart of Gladys either (the
+date is kept in `/data`). When the date has not moved for 2 hours, the
+status says so. Without a date, a fingerprint of the values stands for it.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+## Identity
 
-## Scenes
+The device is keyed by the id the meter reader gives on its `/info` page
+(`84df:0c11:9999:3795`, kept as its hex digits). Every read asks for the id
+before and after the values: if another id answers in between, or if the id
+cannot be read, nothing from that read is published. If another meter reader
+answers at the address, it gets its own device (create it in Discover); the
+old device keeps its history.
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+## Setup
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+1. Find the IP address of the meter reader in your router, and preferably
+   give it a fixed address there.
+2. In Gladys, open the integration, enter this address and save.
+3. In the **Discover** tab, create the device.
 
-## Dashboard
+## Buttons
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+- **Test the connection**: reads the meter reader once when a read is due
+  (never more than one every 30 seconds), otherwise tells the last read: its
+  id, the power, the consumption and injection indexes.
+- **Accept the held index**, in two clicks. The first click shows the index
+  held back and takes nothing. The second click, a few seconds to 5 minutes
+  later, takes what the first showed, only if the held value has not changed
+  since (beyond what the meter may have measured meanwhile). A jump is
+  counted at once as consumption; a drop bills nothing.
 
-## Troubleshooting
+## When something goes wrong
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+- **Unreachable or wrong answer**: new try after 30 seconds, then doubled up
+  to 10 minutes.
+- **The device asks to wait (429) or fails (5xx)**: reads paused from 1
+  minute to 6 hours, also after a restart.
+- **The state file in `/data` cannot be read**: it is left as it is (never
+  written over) and the status says so; a held index or the date of the last
+  values may then be forgotten.
+
+## Privacy
+
+Everything stays on your network. The integration only sends GET requests to
+the address you entered.
