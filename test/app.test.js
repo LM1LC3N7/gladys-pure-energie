@@ -236,6 +236,31 @@ test('freshness: a reading whose time and values have not moved is never publish
   assert.equal(statesOf(s.gladys, 'power').length, 3);
 });
 
+test('the second click is counted on session time, not on the wall clock', async () => {
+  let wh = 9_000_000;
+  const wall = { offset: 0 };
+  const dev = deviceWith({ '/meter/now': (t) => meter({ t, imported: wh }) });
+  const s = await setup({
+    devices: [created({ index: { value: 9000, at: NOW - MINUTE } })],
+    dev,
+    wall,
+  });
+  await s.start();
+  wh = 19_000_000;
+  await s.wait(MINUTE);
+  await s.app.acceptHeldIndex();
+  // Between the clicks the wall clock jumps 10 h and the meter adds 500 kWh:
+  // only 1 minute of session time passed, the margin stays that of 1 minute.
+  wall.offset = 10 * HOUR;
+  wh = 19_500_000;
+  await s.wait(MINUTE);
+  const second = await s.app.acceptHeldIndex();
+  assert.doesNotMatch(second.en, /Accepted/);
+  await s.wait(MINUTE);
+  assert.ok(!statesOf(s.gladys, 'consumption_index').includes(19_000));
+  assert.ok(!statesOf(s.gladys, 'consumption_index').includes(19_500));
+});
+
 test('freshness: nothing old is sent at a restart, a reconnection or a device created', async () => {
   const store = createMemoryStore();
   const t = NOW;
@@ -297,6 +322,27 @@ test('freshness: each device keeps its own mark (A, then B, then A again)', asyn
   await s.wait(30 * SECOND);
   await s.wait(30 * SECOND);
   assert.deepEqual(statesOf(s.gladys, 'power'), [111], 'the frozen reading of A is not new again');
+  // The SDK's de-duplication must not hide a wrong mark: forget what it sent,
+  // B then A again; A's own mark says its reading is old.
+  s.gladys.forgetPublishedStates();
+  raw = OTHER_RAW_ID;
+  await s.wait(30 * SECOND);
+  raw = undefined;
+  await s.wait(30 * SECOND);
+  assert.deepEqual(statesOf(s.gladys, 'power'), [111], 'A is still not new (its own mark)');
+});
+
+test('freshness: at most 8 marks are kept, the least recently changed is forgotten', async () => {
+  const raws = Array.from({ length: 9 }, (_, i) => `84df:0c11:9999:00${i}0`);
+  let n = 0;
+  const dev = deviceWith({ '/info': () => info(raws[n]), '/meter/now': (t) => meter({ t }) });
+  const s = await setup({ dev });
+  await s.start();
+  for (n = 1; n < 9; n += 1) await s.wait(30 * SECOND);
+  const kept = Object.keys(s.store.data.marks);
+  assert.equal(kept.length, 8);
+  assert.ok(!kept.includes(raws[0].replaceAll(':', '')), 'the oldest mark is forgotten');
+  assert.ok(kept.includes(raws[8].replaceAll(':', '')), 'the current one is kept');
 });
 
 test('a reconnection sends a new reading again even with the same values', async () => {
@@ -324,17 +370,47 @@ test('connected: started from the configuration the SDK just read, never a secon
 
 test('a crash during a read: the restart 2 s later does not read again sooner', async () => {
   const store = createMemoryStore();
-  const dev = createDevice();
+  let hang = false;
+  const dev = deviceWith({
+    '/meter/now': () => (hang ? new Promise(() => {}) : meter({ t: NOW })),
+  });
   const s = await setup({ dev, store });
   await s.start();
-  await s.wait(30 * SECOND);
-  const two = dev.net.calls.length;
-  // No stop: the container dies; /data holds what the read wrote before its requests.
+  await s.wait(90 * SECOND);
+  // The next read (due, its attempt written) never ends: the container dies there.
+  hang = true;
+  s.advance(30 * SECOND);
+  await new Promise((resolve) => setImmediate(resolve));
+  const calls = dev.net.calls.length;
+  assert.equal(dev.net.calls.at(-1).path, '/meter/now', 'the read is stuck on its request');
+  // No stop: /data holds what the read wrote before its requests.
+  hang = false;
   const again = await setup({ dev, store, now: s.clock.now + 2 * SECOND });
   await again.start();
-  assert.equal(dev.net.calls.length, two);
+  assert.equal(dev.net.calls.length, calls, 'no read right after the restart');
   await again.wait(29 * SECOND);
-  assert.equal(dev.net.calls.length, two + 3);
+  assert.equal(dev.net.calls.length, calls + 3);
+});
+
+test('/data: an idle hour writes only when something changed (the attempt time once a minute)', async () => {
+  const inner = createMemoryStore();
+  const saves = [];
+  const store = {
+    load: () => inner.load(),
+    async save(data) {
+      saves.push(structuredClone(data));
+      return inner.save(data);
+    },
+  };
+  const dev = deviceWith({ '/meter/now': () => meter({ t: NOW }) });
+  const s = await setup({ devices: [created()], dev, store });
+  await s.start();
+  const base = saves.length;
+  await s.wait(HOUR);
+  assert.ok(dev.net.calls.length >= 360, 'about 120 reads in the hour');
+  assert.ok(saves.length - base <= 61, `${saves.length - base} writes in an idle hour`);
+  const contents = new Set(saves.map((d) => JSON.stringify({ ...d, lastAttemptAt: 0 })));
+  assert.ok(contents.size <= 3, 'apart from the attempt time, the content did not change');
 });
 
 test('the guard runs on session time: a wall clock moved by NTP never widens its margin', async () => {

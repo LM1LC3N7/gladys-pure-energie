@@ -82,6 +82,8 @@ const labelOrUndefined = (value) =>
 const MARK = /^(?:t\d{13})?f[0-9a-f]{8}$/;
 /** At most this many devices keep the mark of their last values in /data. */
 const MAX_KEPT_MARKS = 8;
+/** The time of the last attempt alone is written to /data at most this often (ms). */
+const ATTEMPT_SAVE_EVERY = 60_000;
 
 /** The fingerprint of the values of a reading: 8 hex digits. */
 export const fingerprintOf = (reading) =>
@@ -277,7 +279,7 @@ export class PureEnergieApp {
     return this.serialize(async () => {
       this.doStop();
       // Written first: Docker stops the container 10 s after asking.
-      await this.saveState();
+      await this.saveState(true);
       if (this.busy) {
         let timer;
         await Promise.race([
@@ -669,7 +671,7 @@ export class PureEnergieApp {
   // --- /data -------------------------------------------------------------------------
 
   /** Keeps the device, the date of its values, the pause, the last read and the guards. */
-  async saveState() {
+  async saveState(force = false) {
     // A file that cannot be read (at start or since) is never written over:
     // written again only once it reads back (fixed or removed by the user).
     const loaded = this.store.load();
@@ -709,13 +711,22 @@ export class PureEnergieApp {
       lastAttemptAt: this.lastAttemptAt ?? null,
       indexes: Object.fromEntries(merged),
     };
-    const key = JSON.stringify(state);
-    if (key === this.savedKey) {
+    // Written only when the content changes: the time of the attempt alone
+    // (it moves at every read) is written at most once a minute (SD cards).
+    const key = JSON.stringify({ ...state, lastAttemptAt: null });
+    const mono = this.monotonic();
+    if (
+      !force &&
+      key === this.savedKey &&
+      this.savedAt !== undefined &&
+      mono - this.savedAt < ATTEMPT_SAVE_EVERY
+    ) {
       return;
     }
     try {
       await this.store.save(state);
       this.savedKey = key;
+      this.savedAt = mono;
     } catch (err) {
       this.logger.warn(`Saving the pure-energie state in /data failed (${err?.code ?? 'error'})`);
     }

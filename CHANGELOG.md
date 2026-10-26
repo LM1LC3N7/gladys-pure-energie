@@ -18,4 +18,5 @@ the notes of the version's GitHub Release.
   power, a guarded consumption index (never 0, drops and jumps held until
   accepted in two clicks), the injection as a plain sensor, only fresh values
   (dated by the device, the date kept in `/data`), pauses on 429/5xx, the
-  test and accept buttons.
+  test and accept buttons; `/data` written only when its content changes (the
+  time of the last attempt at most once a minute, for SD cards).

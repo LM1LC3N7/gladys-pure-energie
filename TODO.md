@@ -65,7 +65,8 @@
   status says so.
 - **Pace**: one timer, one read at a time, never two reads less than 30 s
   apart (the HA interval) whatever asks; the time of the last read is in
-  `/data` before every request (review r1); a future date there is not valid
+  `/data` before every request, at most once a minute when nothing else
+  changed (review r1); a future date there is not valid
   (read at once).
 - **Errors**: unreachable or wrong answer: 30 s doubled to 10 min (in
   memory); 429/5xx: pause in `/data`, Retry-After or 1 min doubled, 1 min to

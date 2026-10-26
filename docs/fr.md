@@ -46,8 +46,10 @@ Le lecteur date ses valeurs. Une lecture dont la date et les valeurs n'ont
 pas bougé depuis la précédente n'envoie rien : une vieille valeur n'est
 jamais envoyée comme une nouvelle, ni après un redémarrage de
 l'intégration, ni après un redémarrage de Gladys (cette marque est gardée
-dans `/data`, pour chaque lecteur vu, même quand l'horloge de Gladys
-redémarre en retard). Quand rien n'a bougé depuis 2 heures, l'état le dit.
+dans `/data` pour les 8 lecteurs dont les valeurs ont changé le plus
+récemment : au 9e, la marque du plus ancien est oubliée, et un lecteur
+revenu figé après un redémarrage peut alors être republié une fois ; même
+quand l'horloge de Gladys redémarre en retard). Quand rien n'a bougé depuis 2 heures, l'état le dit.
 Sans date, une empreinte des valeurs en tient lieu.
 
 ## Identité

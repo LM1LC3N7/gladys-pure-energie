@@ -42,8 +42,10 @@ One device, named after the model and the end of the id of the meter reader
 The meter reader dates its values. A read whose date and values have not
 moved since the read before sends nothing: an old value is never sent as a
 new one, not after a restart of the integration nor after a restart of
-Gladys either (this mark is kept in `/data`, for each meter reader seen,
-also when the clock of Gladys restarts behind it). When nothing has moved
+Gladys either (this mark is kept in `/data` for the 8 meter readers whose
+values changed most recently: at the 9th, the oldest mark is forgotten, and a
+reader that comes back frozen after a restart may then be published once; also
+when the clock of Gladys restarts behind it). When nothing has moved
 for 2 hours, the status says so. Without a date, a fingerprint of the
 values stands for it.
 
