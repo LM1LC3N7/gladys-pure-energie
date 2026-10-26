@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-26
+
 ### Added
 
 - First version: the Pure Energie (NET2GRID) meter reader read through its
@@ -20,3 +22,6 @@ the notes of the version's GitHub Release.
   (dated by the device, the date kept in `/data`), pauses on 429/5xx, the
   test and accept buttons; `/data` written only when its content changes (the
   time of the last attempt at most once a minute, for SD cards).
+
+[Unreleased]: https://github.com/LM1LC3N7/gladys-pure-energie/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-pure-energie/releases/tag/v0.1.1
