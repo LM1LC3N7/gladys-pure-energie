@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-27
+
 ### Changed
 
 - Integration SDK 0.16 (no change for the devices).
@@ -27,5 +29,6 @@ the notes of the version's GitHub Release.
   test and accept buttons; `/data` written only when its content changes (the
   time of the last attempt at most once a minute, for SD cards).
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-pure-energie/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-pure-energie/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/LM1LC3N7/gladys-pure-energie/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-pure-energie/releases/tag/v0.1.1
