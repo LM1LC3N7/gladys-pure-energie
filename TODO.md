@@ -27,11 +27,11 @@
 - **Versions**: 0.1.0 set once by hand when leaving the template (package,
   lock file, manifest, image tag `ghcr.io/lm1lc3n7/gladys-pure-energie:0.1.0`);
   the Release workflow owns them from now on.
-- **SDK**: `@gladysassistant/integration-sdk` ^0.15.0, the latest on npm on
-  2026-10-26 (0.16.0 is tagged on GitHub but not published; the template's
-  ^0.16.0 could not be installed). Manifest without `keywords`/`countries`
-  (they need Gladys 5.3, to add with the SDK 0.16 migration);
-  `gladys_version` `>=5.1.0`; category `energy`.
+- **SDK `^0.16.0`** (2026-10-27, migration wave 3): 0.16.0 is on npm since
+  2026-10-25 (a stale npm cache said otherwise); it adds the ai, tts and music
+  types; no effect here (`poll_frequency` unused). `keywords`, `countries`
+  and `gladys_version >= 5.3.0` wait until Gladys 5.3 is widespread.
+- **Manifest**: `gladys_version` `>=5.1.0`; category `energy`.
 - **Reused project**: gridnet (Klaas Schoute, MIT, 5.0.1, `main` at 73564fd),
   cloned read-only in `~/code/ref/lot16/gridnet`, ported to JavaScript
   (`src/net2grid/`): two pages, units, fields. The SDK stays the only runtime
