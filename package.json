@@ -1,6 +1,6 @@
 {
   "name": "gladys-pure-energie",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Pure Energie (NET2GRID) meter reader for Gladys Assistant: read on the home network through its local HTTP API, signed power and a guarded consumption index for the energy monitoring, the injection as a sensor. Read-only.",
   "type": "module",
